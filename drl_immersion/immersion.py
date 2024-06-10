@@ -31,9 +31,9 @@ class immersion(DrlBase):
 
         self.x_min       = np.array([0.005, 0, 0, 0, 0, -0.08, -0.1, -0.1, 0, -0.1 ])  # Fin cambrure, attention
         self.x_max       = np.array([0.05, 0.07, 0.12, 0.07, 0.15, 0., 0., 0., 1, 0.1 ]) 
-        self.x_0         =         self.x_0         = np.array([                            # Coord du naca 2412
+        self.x_0         = np.array([                            # Coord du naca 2412
             0.0234,  0.0821,  0.122,  0.124,
-            0.0846, -0.0132,  0.00811,  0.0212, 0, 1])
+            0.0846, -0.0132,  -0.00811,  -0.0212, 0, 1])
         self.x_camb      = 0.                                     # La cambrure
         self.y_camb      = 0.                                     # La cambrure
         self.area        = 0  
@@ -44,7 +44,7 @@ class immersion(DrlBase):
         self.area_min    = 0.1 
         self.angle       = 0.
         self.alpha       = 200 
-        self.episode     = 0
+        self.episode = 0
         self.time_init   = 0.
         self.time_end    = 0.
         os.makedirs('fichiers_txt', exist_ok=True)       # Pour mettre les fichiers textes de résultats 
@@ -58,22 +58,23 @@ class immersion(DrlBase):
     def shape_generation_dussauge(self, control_parameters):
         """ Generate shape using the parametrisation in Dessauge paper  modify to take camber in account """
         control_points = self.reconstruct_control_points(control_parameters)  
-        # On écrit la valeur de l'épisode au cas où
-        if not os.path.isfile('fichiers_txt/Values.txt'):
-            f = open('fichiers_txt/Values.txt','w')
-            head = "Index"
+        if self.episode != 0 :        # on ne veut pas de la première car bug ecriture du fichier
+            # On écrit la valeur de l'épisode 
+            if not os.path.isfile('fichiers_txt/Values.txt'):
+                f = open('fichiers_txt/Values.txt','w')
+                head = "Index   episode"
+                for k in range(self.act_size):
+                    head += f'\t{k}'
+                head += '\n'
+                f.write(head)
+            else:
+                f = open('fichiers_txt/Values.txt','a')
+            new_line = str(self.episode)+'\t'+str(self.ep)
             for k in range(self.act_size):
-                head += f'\t{k}'
-            head += '\n'
-            f.write(head)
-        else:
-            f = open('fichiers_txt/Values.txt','a')
-        new_line = str(self.episode)
-        for k in range(self.act_size):
-            new_line +=  '\t' + "{:.3e}".format(control_parameters[k])   # On écrit les control parameters 
-        new_line += '\n'
-        f.write(new_line)
-        f.close()
+                new_line +=  '\t' + "{:.3e}".format(control_parameters[k])   # On écrit les control parameters 
+            new_line += '\n'
+            f.write(new_line)
+            f.close()
         
         # Transforme les actions en control point
         curve          = self.airfoil(control_points,16)                 # Donne la courbe de l'aile
@@ -108,80 +109,6 @@ class immersion(DrlBase):
         #     gmsh.finalize()
         #     print('error: ', e)   ##### Normalement pas besoin 
         #     pass
-
-
-
-
-
-
-    #--- CFD RESOLUTION ---------------------------------------------------------------------------------------+
-
-    def cfd_solve(self, x, ep):
-        """ Return le reward : calcul l'airfoil, mesh, lance les simulations, calcul le reward """
-        self.time_init=dt.datetime.now()                                        # On suit en temps le DRL
-        if not os.path.isfile('fichiers_txt/temps_start.txt'):
-            f = open('fichiers_txt/temps_start.txt','w')
-            f.write('Index'+'\t'+'Heure start'+'\n')
-            f.close()
-        f = open('fichiers_txt/temps_start.txt','a')
-        f.write(str(ep)+'\t'+ dt.datetime.now().strftime("%H:%M:%S")+'\n')
-        f.close()
-
-        ### Create folders and copy cfd (please kill me)
-        ### On met les résultats là dedans 
-        self.output_path = self.path+'/'+str(ep)+'/'  # Pour chaque épisode
-        self.vtu_path    = self.output_path+'vtu/'
-        self.effort      = self.output_path+'effort/'
-        self.msh_path    = self.output_path+'msh/'
-        self.t_mesh_path = self.output_path+'t_mesh/'
-        
-        os.makedirs(self.effort)
-        os.makedirs(self.vtu_path)
-        os.makedirs(self.msh_path)
-        os.makedirs(self.t_mesh_path)
-        os.system('cp -r cfd ' + self.output_path + '.')   
-        
-        ### Convert action to coordinates 
-    #  to_concatanate = np.array([self.x_camb, self.y_camb])           ###### 1 enlever si cambrure bouge ######
-    # control_parameters = np.concatenate((np.array(x), to_concatanate))   # On ajoute la cambrure qui est fixe
-        #### enlever ça ou le toucher pour faire varier cambrure
-
-        ### create the shape 
-    # self.shape_generation_dussauge(control_parameters)     # sans cambrure qui bouge 
-        control_parameters = np.array(x)
-        self.shape_generation_dussauge(x)
-
-        ### convert to .t
-        os.system('cd '+self.output_path+'cfd ; python3 gmsh2mtc.py')
-        os.system('cd '+self.output_path+'cfd ; cp -r airfoil.msh ../msh')
-        os.system('cd '+self.output_path+'cfd ; module load cimlibxx/master')
-        os.system('cd '+self.output_path+'cfd ; echo 0 | mtcexe airfoil.t')
-        os.system('cd '+self.output_path+'cfd ; cp -r airfoil.t ../t_mesh')
-        
-        ### solving the problem
-        self.solve_problem_cimlib()
-
-        ### Compute the reward 
-        self.compute_reward(control_parameters)
-
-        ### On écrit la durée
-        self.time_end     = dt.datetime.now()
-        difference        = self.time_end - self.time_init
-        heures, reste     = divmod(difference.seconds, 3600)
-        minutes, secondes = divmod(reste, 60)
-        
-        if not os.path.isfile('fichiers_txt/duree.txt'):
-            f = open('fichiers_txt/duree.txt','w')
-            f.write('Index'+'\t'+'Heure start'+'\t'+'Heure end'+'\t'+'Durée'+'\n')
-            f.close()
-        fi = open('fichiers_txt/duree.txt','a')
-        fi.write(
-            str(ep)+'\t'+ self.time_init.strftime("%H:%M:%S")+'\t'
-            +self.time_end.strftime("%H:%M:%S")+'\t'
-            +f"{str(heures)}:{str(minutes)}:{str(secondes)}"+'\n'
-            )
-        fi.close()
-        return self.reward
 
                 
 

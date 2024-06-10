@@ -1,6 +1,7 @@
 #--- GENERIC IMPORT ----------------------------------------------------------------------------------------------+
 import os
 import numpy as np
+import datetime as dt
 
 class DrlBase :
 
@@ -16,6 +17,10 @@ class DrlBase :
         os.system('rm -r '+self.output_path+'cfd')
         os.system('cp -r '+self.vtu_path+'bulles_00500.vtu ./video/')                                  
         os.system('mv ./video/bulles_00500.vtu '+'./video/video_'+str(self.episode)+'.vtu')
+        
+        # les efforts 
+        os.system('cp -r' + self.effort+
+                  'fichiers_txt/' + str(self.ep) +'/effort/')
         
     
     def compute_reward(self, control_parameters):
@@ -54,20 +59,93 @@ class DrlBase :
             self.finesse_max = -1000
 
         ### Ecriture dans Reward
-        if not os.path.isfile('fichiers_txt/reward.txt'):
-            
-            f = open('fichiers_txt/reward.txt','w')
-            f.write(
-                'Index'+'\t'+'finesse_moy'+'\t'+'finesse_max'+'\t'+'Area'+'\t'+'Reward'+'\n'
-                )
-        else:
-            f = open('fichiers_txt/reward.txt','a')
-        f.write(f"{str(self.episode)}\t{self.finesse_moy:.3e}\t"
-                +f"{self.finesse_max:.3e}\t{self.area:.3e}\t"
-                +f"{self.reward}\n"
-                )
-        f.close()
+        if self.episode != 0 : # on ne veut pas du premier car ça bug sinon
+            if not os.path.isfile('fichiers_txt/reward.txt'):
+                
+                f = open('fichiers_txt/reward.txt','w')
+                f.write(
+                    'Index'+'\t'+'episode'+'finesse_moy'+'\t'+'finesse_max'+'\t'+'Area'+'\t'+'Reward'+'\n'
+                    )
+            else:
+                f = open('fichiers_txt/reward.txt','a')
+            f.write(f"{str(self.episode)}\t{self.ep}\t{self.finesse_moy:.3e}\t"
+                    +f"{self.finesse_max:.3e}\t{self.area:.3e}\t"
+                    +f"{self.reward:.3e}\n"
+                    )
+            f.close()
         self.episode += 1 
+
+    #--- CFD RESOLUTION ---------------------------------------------------------------------------------------+
+
+    def cfd_solve(self, x, ep):
+        """ Return le reward : calcul l'airfoil, mesh, lance les simulations, calcul le reward """
+        self.time_init=dt.datetime.now()                                        # On suit en temps le DRL
+        if not os.path.isfile('fichiers_txt/temps_start.txt'):
+            f = open('fichiers_txt/temps_start.txt','w')
+            f.write('Index'+'\t'+'Heure start'+'\n')
+            f.close()
+        f = open('fichiers_txt/temps_start.txt','a')
+        f.write(str(ep)+'\t'+ dt.datetime.now().strftime("%H:%M:%S")+'\n')
+        f.close()
+
+        ### Create folders and copy cfd (please kill me)
+        ### On met les résultats là dedans 
+        self.output_path = self.path+'/'+str(ep)+'/'  # Pour chaque épisode
+        self.vtu_path    = self.output_path+'vtu/'
+        self.effort      = self.output_path+'effort/'
+        self.msh_path    = self.output_path+'msh/'
+        self.t_mesh_path = self.output_path+'t_mesh/'
+        
+        os.makedirs(self.effort)
+        os.makedirs(self.vtu_path)
+        os.makedirs(self.msh_path)
+        os.makedirs(self.t_mesh_path)
+        os.system('cp -r cfd ' + self.output_path + '.')   
+        
+        ## make dir effort pour visualiser
+        os.makedirs('fichiers_txt/' + str(self.ep) +'/effort/')
+        
+        
+        ### Convert action to coordinates 
+    #  to_concatanate = np.array([self.x_camb, self.y_camb])           ###### 1 enlever si cambrure bouge ######
+    # control_parameters = np.concatenate((np.array(x), to_concatanate))   # On ajoute la cambrure qui est fixe
+        #### enlever ça ou le toucher pour faire varier cambrure
+
+        ### create the shape 
+    # self.shape_generation_dussauge(control_parameters)     # sans cambrure qui bouge 
+        self.shape_generation_dussauge(x)
+
+        ### convert to .t
+        os.system('cd '+self.output_path+'cfd ; python3 gmsh2mtc.py')
+        os.system('cd '+self.output_path+'cfd ; cp -r airfoil.msh ../msh')
+        os.system('cd '+self.output_path+'cfd ; module load cimlibxx/master')
+        os.system('cd '+self.output_path+'cfd ; echo 0 | mtcexe airfoil.t')
+        os.system('cd '+self.output_path+'cfd ; cp -r airfoil.t ../t_mesh')
+        
+        ### solving the problem
+        self.solve_problem_cimlib()
+
+        ### Compute the reward 
+        self.compute_reward(np.array(x))
+
+        ### On écrit la durée
+        self.time_end     = dt.datetime.now()
+        difference        = self.time_end - self.time_init
+        heures, reste     = divmod(difference.seconds, 3600)
+        minutes, secondes = divmod(reste, 60)
+        
+        if not os.path.isfile('fichiers_txt/duree.txt'):
+            f = open('fichiers_txt/duree.txt','w')
+            f.write('Index'+'\t'+'Heure start'+'\t'+'Heure end'+'\t'+'Durée'+'\n')
+            f.close()
+        fi = open('fichiers_txt/duree.txt','a')
+        fi.write(
+            str(ep)+'\t'+ self.time_init.strftime("%H:%M:%S")+'\t'
+            +self.time_end.strftime("%H:%M:%S")+'\t'
+            +f"{str(heures)}:{str(minutes)}:{str(secondes)}"+'\n'
+            )
+        fi.close()
+        return self.reward
     
     
     #--- FONCTION DE PARAMETRISATION -----------------------------------------------------------------------------+
@@ -108,6 +186,12 @@ class DrlBase :
         correction = x[-1] * y[0] - y[-1]* x[0]
         main_area  = np.dot(x[:-1], y[1:]) - np.dot(y[:-1], x[1:])
         return 0.5*np.abs(main_area + correction)
+    
+    def translate_curve(self, curve, x_translate, y_translate):
+        translate_curve = np.array(curve)
+        translate_curve[:,0] += x_translate
+        translate_curve[:,1] += y_translate
+        return list(translate_curve)
     
 #--- FONCTION DE PUNITION POUR LA SURFACE -----------------------------------------------------------------------+
 

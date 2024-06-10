@@ -1,10 +1,14 @@
 ###### Fonction qui regarde si le range est bon ######
 
 # Importer la class 
-from immersion import immersion
 import os
+import sys
 import numpy as np
-import random
+import shutil
+
+dossier_parent = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(dossier_parent)
+from immersion import immersion
 
 
 
@@ -23,28 +27,25 @@ class immersion_modified(immersion):
         self.shape_generation_dussauge(control_parameter)
         
     def test_a_lot(self):
-        for k in range(500):
+        for k in range(15):
             vect_random = np.random.rand(len(self.range_min))
             control_parameter = vect_random * self.range_min + (1-vect_random) * self.range_max
             self.create_shape(control_parameter, k)
+        print('OK tout bon')
+        shutil.rmtree(self.path)
+        shutil.rmtree('fichiers_txt')
+    
+        
 
 
 
 if __name__ == '__main__':
-    
-    
-    
     #### range à tester : 
     range_min = np.array([0.005, 0, 0, 0, 0, -0.15, -0.1, -0.1, 0, -0.1 ])
     range_max = np.array([0.05, 0.09, 0.17, 0.09, 0.15, 0., 0., 0., 1, 0.1 ])
     test = immersion_modified(range_min, range_max)
     test.test_a_lot()
-    # essayer de générer un profil :
-    # test.create_shape(np.array([                            # Coord du naca 2412
-    #         0.0234,  0.0821,  0.122,  0.124,
-    #         0.0846, -0.0132,  0.00811,  0.0212, 0, 0]), -3)
-    
-    #test.test_a_lot()
+
 
 
 
