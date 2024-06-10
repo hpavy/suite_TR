@@ -44,7 +44,7 @@ class immersion(DrlBase):
         self.area_min    = 0.1 
         self.angle       = 0.
         self.alpha       = 200 
-        self.episode = 0
+        self.episode     = 0
         self.time_init   = 0.
         self.time_end    = 0.
         os.makedirs('fichiers_txt', exist_ok=True)       # Pour mettre les fichiers textes de résultats 
@@ -114,6 +114,7 @@ class immersion(DrlBase):
 
     ### Take one step
     def step(self, actions, ep):
+        self.ep = ep
         conv_actions = self.convert_actions(actions)
         reward       = self.cfd_solve(conv_actions, ep)
         return reward, conv_actions
